@@ -1,5 +1,5 @@
 import argparse
-
+import time
 from pyspark.sql import SparkSession
 from pyspark.sql import functions as F
 
@@ -38,6 +38,22 @@ GROUP_COLUMNS = [
     "pickup_weekday",
 ]
 
+DISPLAY_COLUMNS = [
+    "pickup_datetime",
+    "dropoff_datetime",
+    "PULocationID",
+    "DOLocationID",
+    "pickup_borough",
+    "pickup_zone",
+    "dropoff_borough",
+    "dropoff_zone",
+    "trip_miles",
+    "trip_time",
+    "base_passenger_fare",
+    "tips",
+    "driver_pay",
+]
+
 
 def valid_hour(value: str) -> int:
     hour = int(value)
@@ -60,12 +76,7 @@ def create_spark() -> SparkSession:
 
 def load_data(spark: SparkSession, data_path: str):
     print(f"Loading {data_path}...")
-
-    df = spark.read.parquet(data_path)
-
-    print(f"Loaded {df.count():,} records.")
-
-    return df
+    return spark.read.parquet(data_path)
 
 
 def load_zone_lookup(spark: SparkSession, path: str):
@@ -139,10 +150,12 @@ def filter_trips(df, args):
         )
 
     if args.end_date:
-        result = result.filter(
-            F.col("pickup_datetime")
-            <= F.to_timestamp(F.lit(args.end_date))
-        )
+        if len(args.end_date) == 10:
+            end = F.to_timestamp(F.lit(args.end_date)) + F.expr("INTERVAL 1 DAY")
+            result = result.filter(F.col("pickup_datetime") < end)
+        else:
+            end = F.to_timestamp(F.lit(args.end_date))
+            result = result.filter(F.col("pickup_datetime") <= end)
 
     if args.pickup_zone is not None:
         result = result.filter(
@@ -207,10 +220,7 @@ def trips_command(df, args):
         "driver_pay",
     ]
 
-    result.select(*columns).show(
-        args.limit,
-        truncate=False,
-    )
+    result.select(*args.columns).show(args.limit, truncate=False)
 
 
 def stats_command(df, args):
@@ -222,8 +232,12 @@ def stats_command(df, args):
             F.max(args.attribute).alias("max"),
             F.mean(args.attribute).alias("mean"),
             F.stddev(args.attribute).alias("std"),
+            F.sum(args.attribute).alias("sum"),
+            F.expr(
+                f"percentile_approx({args.attribute}, 0.5)"
+            ).alias("median"),
         )
-        .orderBy(F.col("count").desc())
+        .orderBy(F.desc("count"))
     )
 
     stats.show(
@@ -257,6 +271,24 @@ def build_parser():
     trips_parser = subparsers.add_parser(
         "trips",
         help="Filter and display trips",
+    )
+
+    trips_parser.add_argument(
+        "--columns",
+        nargs="+",
+        choices=DISPLAY_COLUMNS,
+        default=[
+            "pickup_datetime",
+            "PULocationID",
+            "DOLocationID",
+            "pickup_borough",
+            "pickup_zone",
+            "trip_miles",
+            "trip_time",
+            "base_passenger_fare",
+            "tips",
+            "driver_pay",
+            ],
     )
 
     trips_parser.add_argument("--start-date")
@@ -321,6 +353,8 @@ def main():
 
     spark = create_spark()
 
+    start_time = time.perf_counter()
+
     try:
         df = load_data(
             spark,
@@ -344,6 +378,9 @@ def main():
 
         elif args.command == "stats":
             stats_command(df, args)
+
+        elapsed = time.perf_counter() - start_time
+        print(f"\nExecution time: {elapsed:.3f} seconds")
 
     finally:
         spark.stop()

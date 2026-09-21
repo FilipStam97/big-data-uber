@@ -1,6 +1,6 @@
 import argparse
 from pathlib import Path
-
+import time
 import pandas as pd
 
 SORTABLE_COLUMNS = [
@@ -39,15 +39,52 @@ GROUP_COLUMNS = [
     "pickup_weekday",
 ]
 
+DISPLAY_COLUMNS = [
+    "pickup_datetime",
+    "dropoff_datetime",
+    "PULocationID",
+    "DOLocationID",
+    "pickup_borough",
+    "pickup_zone",
+    "dropoff_borough",
+    "dropoff_zone",
+    "trip_miles",
+    "trip_time",
+    "base_passenger_fare",
+    "tips",
+    "driver_pay",
+]
 
-def load_data(data_path: str) -> pd.DataFrame:
+
+def load_data(data_path):
     path = Path(data_path)
 
     if not path.exists():
-        raise FileNotFoundError(f"Dataset not found: {path}")
+        raise FileNotFoundError(f"Data path does not exist: {data_path}")
 
-    print(f"Loading {path}...")
-    df = pd.read_parquet(path)
+    print(f"Loading {data_path}...")
+
+    if path.is_dir():
+        files = sorted(path.glob("*.parquet"))
+
+        if not files:
+            raise FileNotFoundError(
+                f"No parquet files found in directory: {data_path}"
+            )
+
+        print(f"Found {len(files)} parquet files.")
+
+        frames = []
+
+        for file in files:
+            print(f"Reading {file.name}...")
+            frames.append(pd.read_parquet(str(file)))
+
+        print("Combining files...")
+        df = pd.concat(frames, ignore_index=True)
+
+    else:
+        df = pd.read_parquet(str(path))
 
     print(f"Loaded {len(df):,} records.")
     return df
@@ -122,9 +159,13 @@ def filter_trips(df: pd.DataFrame, args) -> pd.DataFrame:
         ]
 
     if args.end_date:
-        result = result[
-            result["pickup_datetime"] <= pd.to_datetime(args.end_date)
-        ]
+        end = pd.to_datetime(args.end_date)
+
+        if len(args.end_date) == 10:
+            end = end + pd.Timedelta(days=1)
+            result = result[result["pickup_datetime"] < end]
+        else:
+            result = result[result["pickup_datetime"] <= end]
 
     if args.pickup_zone is not None:
         result = result[
@@ -184,7 +225,7 @@ def trips_command(df: pd.DataFrame, args):
         "driver_pay",
     ]
 
-    print(result[columns].head(args.limit).to_string(index=False))
+    print(result[args.columns].head(args.limit).to_string(index=False))
 
 
 def add_time_features(df: pd.DataFrame) -> pd.DataFrame:
@@ -201,7 +242,7 @@ def add_time_features(df: pd.DataFrame) -> pd.DataFrame:
 def stats_command(df: pd.DataFrame, args):
     stats = (
         df.groupby(args.group_by)[args.attribute]
-        .agg(["count", "min", "max", "mean", "std"])
+        .agg(["count", "min", "max", "mean", "std", "sum", "median"])
         .sort_values("count", ascending=False)
     )
 
@@ -233,6 +274,24 @@ def build_parser():
     trips_parser = subparsers.add_parser(
         "trips",
         help="Filter and display trips",
+    )
+
+    trips_parser.add_argument(
+    "--columns",
+    nargs="+",
+    choices=DISPLAY_COLUMNS,
+    default=[
+        "pickup_datetime",
+        "PULocationID",
+        "DOLocationID",
+        "pickup_borough",
+        "pickup_zone",
+        "trip_miles",
+        "trip_time",
+        "base_passenger_fare",
+        "tips",
+        "driver_pay",
+        ],
     )
 
     trips_parser.add_argument("--start-date")
@@ -280,6 +339,8 @@ def main():
     parser = build_parser()
     args = parser.parse_args()
 
+    start_time = time.perf_counter()
+
     df = load_data(args.data)
 
     zones = load_zone_lookup(args.zones)
@@ -292,6 +353,9 @@ def main():
 
     elif args.command == "stats":
         stats_command(df, args)
+
+    elapsed = time.perf_counter() - start_time
+    print(f"\nExecution time: {elapsed:.3f} seconds")
 
 
 if __name__ == "__main__":

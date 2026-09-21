@@ -49,6 +49,7 @@ services:
       - namenode_data:/tmp/hadoop-root/dfs/name
       - ./docker/hadoop/core-site.xml:/opt/hadoop/etc/hadoop/core-site.xml
       - ./docker/hadoop/hdfs-site.xml:/opt/hadoop/etc/hadoop/hdfs-site.xml
+      - ./data:/data:ro
 
   datanode:
     image: apache/hadoop:3.5.0
@@ -63,6 +64,21 @@ services:
       - datanode_data:/tmp/hadoop-root/dfs/data
       - ./docker/hadoop/core-site.xml:/opt/hadoop/etc/hadoop/core-site.xml
       - ./docker/hadoop/hdfs-site.xml:/opt/hadoop/etc/hadoop/hdfs-site.xml
+
+  
+  spark-app:
+    build:
+      context: .
+      dockerfile: docker/app/Dockerfile
+    container_name: spark-app
+    hostname: spark-app
+    command: ["sleep", "infinity"]
+    depends_on:
+      - spark-master
+      - spark-worker-1
+      - spark-worker-2
+      - namenode
+      - datanode
 
 volumes:
   namenode_data:
